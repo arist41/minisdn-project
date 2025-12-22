@@ -1,0 +1,31 @@
+# docker-compose.yml - UPDATED
+services:
+  node1:
+    image: my-ryu
+    container_name: minisdn-node1
+    network_mode: "host"
+    volumes:
+      - ./:/app
+    environment:
+      - NODE_ID=node1
+    command: ryu-manager --ofp-tcp-listen-port 6633 --verbose /app/controller.py
+
+  node2:
+    image: my-ryu
+    container_name: minisdn-node2
+    network_mode: "host"
+    volumes:
+      - ./:/app
+    environment:
+      - NODE_ID=node2
+    command: ryu-manager --ofp-tcp-listen-port 6634 --verbose /app/controller.py
+
+  node3:
+    image: my-ryu
+    container_name: minisdn-node3
+    network_mode: "host"
+    volumes:
+      - ./:/app
+    environment:
+      - NODE_ID=node3
+    command: ryu-manager --ofp-tcp-listen-port 6635 --verbose /app/controller.py
