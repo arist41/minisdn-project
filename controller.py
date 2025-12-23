@@ -7,6 +7,7 @@ import time
 import threading
 import requests
 import os
+import random
 from flask import Flask, jsonify, request
 from ryu.base import app_manager
 from ryu.controller import ofp_event
@@ -22,6 +23,7 @@ PEERS = {'node1', 'node2', 'node3'} - {node_id}
 # --- Cluster State ---
 class ClusterState:
     def __init__(self, node_id):
+        
         self.node_id = node_id
         self.role = "follower"
         self.leader_id = None
@@ -30,52 +32,49 @@ class ClusterState:
         self.switches = {}
         self.last_heartbeat_time = time.time()
         
-        # Start election timer
+        # FIXED: Random election timeout (8-12 seconds)
+        self.election_timeout = random.uniform(8.0, 12.0)
+        
+        # FIXED: Only ONE election timer thread
         threading.Thread(target=self._election_timer, daemon=True).start()
         
-        # Node1 starts election first
-        if node_id == "node1":
-            threading.Timer(2.0, self._start_election).start()
-        else:
-            # Other nodes wait longer
-            threading.Timer(4.0 + int(node_id[-1]), self._maybe_start_election).start()
-    
-    def _maybe_start_election(self):
-        """Start election if no leader detected"""
-        if self.leader_id is None and self.role == "follower":
-            time_since_heartbeat = time.time() - self.last_heartbeat_time
-            if time_since_heartbeat > 8.0:  # 8 seconds without heartbeat
-                self._start_election()
+        # FIXED: Remove the fixed timers! No more node1 special case
+        # All nodes start with same logic
     
     def _election_timer(self):
-        """Monitor for leader heartbeat timeouts"""
+        """Monitor for leader heartbeat timeouts - SINGLE THREAD"""
         while True:
-            time.sleep(2)
-            if self.role == "follower" and self.leader_id:
-                time_since_heartbeat = time.time() - self.last_heartbeat_time
-                if time_since_heartbeat > 10.0:  # 10 second timeout
-                    print(f"[{self.node_id}] ❌ Leader {self.leader_id} heartbeat timeout")
-                    self.leader_id = None
-                    self._start_election()
-            elif self.role == "follower" and not self.leader_id:
-                time_since_start = time.time() - self.last_heartbeat_time
-                if time_since_start > 15.0:  # 15 seconds without any leader
-                    self._start_election()
+            time.sleep(0.5)  # Check every 0.5 seconds (not 2)
+            
+            # If we're leader, don't run elections
+            if self.role == "leader":
+                continue
+                
+            time_since_heartbeat = time.time() - self.last_heartbeat_time
+            
+            # FIXED: Use random timeout, reset when we receive heartbeat/vote
+            if time_since_heartbeat > self.election_timeout:
+                print(f"[{self.node_id}] ⏰ Election timeout ({self.election_timeout:.1f}s)")
+                self._start_election()
     
     def _start_election(self):
         """Start a new election"""
         if self.role == "leader":
             return  # Leaders don't start elections
             
+        print(f"[{self.node_id}] 🗳️  Starting election for term {self.current_term + 1}")
+        
         self.role = "candidate"
         self.current_term += 1
         self.voted_for = self.node_id  # Vote for ourselves
         votes_received = 1  # vote for self
         
-        print(f"[{self.node_id}] 🗳️  Candidate for term {self.current_term}")
-        
-        # Request votes from peers
-        for peer in PEERS:
+        # FIXED: Request votes from ALL peers (including ourselves)
+        all_nodes = ['node1', 'node2', 'node3']
+        for peer in all_nodes:
+            if peer == self.node_id:
+                continue  # Skip ourselves
+                
             try:
                 response = requests.post(
                     f"http://localhost:{WEB_PORTS[peer]}/request_vote",
@@ -89,12 +88,14 @@ class ClusterState:
                 print(f"[{self.node_id}] ❌ Failed to get vote from {peer}: {e}")
         
         # Win election if majority (3 nodes -> need 2 votes)
-        total_nodes = len(PEERS) + 1  # Include self
+        total_nodes = len(all_nodes)
         if votes_received > total_nodes / 2:
             self._become_leader()
         else:
             self.role = "follower"
             print(f"[{self.node_id}] ❌ Election lost, only got {votes_received}/{total_nodes} votes")
+            # FIXED: Reset election timeout for next try
+            self.election_timeout = random.uniform(8.0, 12.0)
     
     def _become_leader(self):
         """Become the leader"""
@@ -114,7 +115,7 @@ class ClusterState:
     def _send_heartbeats(self):
         """Leader sends heartbeats to followers"""
         while self.role == "leader":
-            time.sleep(3)
+            time.sleep(2)  # FIXED: Send every 2 seconds (not 3)
             for peer in PEERS:
                 try:
                     requests.post(
@@ -128,11 +129,13 @@ class ClusterState:
     def receive_heartbeat(self, leader_id, term):
         """Receive heartbeat from leader"""
         if term >= self.current_term:
+            # FIXED: Update term and reset election timeout
             self.current_term = term
             self.leader_id = leader_id
             self.role = "follower"
             self.voted_for = None  # Reset vote for next election
             self.last_heartbeat_time = time.time()
+            self.election_timeout = random.uniform(8.0, 12.0)  # Reset timeout
             
             if leader_id != self.node_id:
                 print(f"[{self.node_id}] ❤️  Heartbeat from {leader_id} (term {term})")
@@ -169,30 +172,40 @@ def receive_heartbeat():
 @web_app.route('/request_vote', methods=['POST'])
 def request_vote():
     """Handle vote requests from candidates"""
+    import time  # Add if not already at top
+    
     data = request.get_json()
     candidate_term = data['term']
     candidate_id = data['candidate']
     
     print(f"[{node_id}] 📨 Vote request from {candidate_id} (term {candidate_term}, our term {state.current_term})")
     
+    # FIXED: Reset election timeout when we vote for someone
+    vote_granted = False
+    
     # Grant vote if:
     # 1. Candidate's term is higher than ours, OR
-    # 2. Same term and we haven't voted yet or voted for same candidate
+    # 2. Same term and we haven't voted yet
     if candidate_term > state.current_term:
         state.current_term = candidate_term
         state.voted_for = candidate_id
         state.leader_id = None
         state.role = "follower"
+        state.last_heartbeat_time = time.time()  # Reset heartbeat timer
+        state.election_timeout = random.uniform(8.0, 12.0)  # Reset timeout
+        vote_granted = True
         print(f"[{node_id}] ✅ Voted for {candidate_id} (term {candidate_term})")
-        return jsonify({'vote_granted': True, 'term': state.current_term})
     
     elif candidate_term == state.current_term and state.voted_for in [None, candidate_id]:
         state.voted_for = candidate_id
+        state.last_heartbeat_time = time.time()  # Reset heartbeat timer
+        state.election_timeout = random.uniform(8.0, 12.0)  # Reset timeout
+        vote_granted = True
         print(f"[{node_id}] ✅ Voted for {candidate_id} (term {candidate_term})")
-        return jsonify({'vote_granted': True, 'term': state.current_term})
+    else:
+        print(f"[{node_id}] ❌ Rejected vote for {candidate_id}")
     
-    print(f"[{node_id}] ❌ Rejected vote for {candidate_id}")
-    return jsonify({'vote_granted': False, 'term': state.current_term})
+    return jsonify({'vote_granted': vote_granted, 'term': state.current_term})
 
 @web_app.route('/force_election', methods=['POST'])
 def force_election():
