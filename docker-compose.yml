@@ -1,4 +1,4 @@
-# docker-compose.yml - UPDATED
+# docker-compose.yml
 services:
   node1:
     image: my-ryu

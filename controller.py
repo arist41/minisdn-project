@@ -15,12 +15,12 @@ from ryu.controller.handler import set_ev_cls, MAIN_DISPATCHER, CONFIG_DISPATCHE
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, arp, ipv4, icmp
 
-# --- Configuration ---
+#configuration
 node_id = os.environ.get('NODE_ID', 'node1')
 WEB_PORTS = {'node1': 5001, 'node2': 5002, 'node3': 5003}
 PEERS = {'node1', 'node2', 'node3'} - {node_id}
 
-# --- Cluster State ---
+#cluster node
 class ClusterState:
     def __init__(self, node_id):
         
@@ -28,31 +28,28 @@ class ClusterState:
         self.role = "follower"
         self.leader_id = None
         self.current_term = 0
-        self.voted_for = None  # Track who we voted for
+        self.voted_for = None
         self.switches = {}
         self.last_heartbeat_time = time.time()
         
-        # FIXED: Random election timeout (8-12 seconds)
+        #random election timeout (8-12 seconds)
         self.election_timeout = random.uniform(8.0, 12.0)
         
-        # FIXED: Only ONE election timer thread
+        #only one election timer thread
         threading.Thread(target=self._election_timer, daemon=True).start()
-        
-        # FIXED: Remove the fixed timers! No more node1 special case
-        # All nodes start with same logic
     
     def _election_timer(self):
         """Monitor for leader heartbeat timeouts - SINGLE THREAD"""
         while True:
-            time.sleep(0.5)  # Check every 0.5 seconds (not 2)
+            time.sleep(0.5)  #check every 0.5 seconds
             
-            # If we're leader, don't run elections
+            #if we're leader, don't run elections
             if self.role == "leader":
                 continue
                 
             time_since_heartbeat = time.time() - self.last_heartbeat_time
             
-            # FIXED: Use random timeout, reset when we receive heartbeat/vote
+            #use the random timeout, reset when we receive heartbeat/vote
             if time_since_heartbeat > self.election_timeout:
                 print(f"[{self.node_id}] ⏰ Election timeout ({self.election_timeout:.1f}s)")
                 self._start_election()
@@ -60,16 +57,16 @@ class ClusterState:
     def _start_election(self):
         """Start a new election"""
         if self.role == "leader":
-            return  # Leaders don't start elections
+            return  #leaders don't start elections
             
         print(f"[{self.node_id}] 🗳️  Starting election for term {self.current_term + 1}")
         
         self.role = "candidate"
         self.current_term += 1
-        self.voted_for = self.node_id  # Vote for ourselves
-        votes_received = 1  # vote for self
+        self.voted_for = self.node_id  #voted for myself
+        votes_received = 1  #vote for self
         
-        # FIXED: Request votes from ALL peers (including ourselves)
+        #Request votes from ALL peers (including ourselves)
         all_nodes = ['node1', 'node2', 'node3']
         for peer in all_nodes:
             if peer == self.node_id:
@@ -87,14 +84,14 @@ class ClusterState:
             except Exception as e:
                 print(f"[{self.node_id}] ❌ Failed to get vote from {peer}: {e}")
         
-        # Win election if majority (3 nodes -> need 2 votes)
+        #win election if majority (3 nodes -> need 2 votes)
         total_nodes = len(all_nodes)
         if votes_received > total_nodes / 2:
             self._become_leader()
         else:
             self.role = "follower"
             print(f"[{self.node_id}] ❌ Election lost, only got {votes_received}/{total_nodes} votes")
-            # FIXED: Reset election timeout for next try
+            #reset election timeout for next try
             self.election_timeout = random.uniform(8.0, 12.0)
     
     def _become_leader(self):
@@ -105,17 +102,17 @@ class ClusterState:
         print(f"🏆 [{self.node_id}] LEADER ELECTED (Term {self.current_term})")
         print(f"{'='*50}\n")
         
-        # Notify all connected switches about new master
+        #notify all connected switches about new master
         for switch_id in self.switches.keys():
             self.switches[switch_id]['master'] = self.node_id
         
-        # Start sending heartbeats
+        #start sending heartbeats
         threading.Thread(target=self._send_heartbeats, daemon=True).start()
     
     def _send_heartbeats(self):
         """Leader sends heartbeats to followers"""
         while self.role == "leader":
-            time.sleep(2)  # FIXED: Send every 2 seconds (not 3)
+            time.sleep(2)  #Send every 2 seconds
             for peer in PEERS:
                 try:
                     requests.post(
@@ -129,24 +126,24 @@ class ClusterState:
     def receive_heartbeat(self, leader_id, term):
         """Receive heartbeat from leader"""
         if term >= self.current_term:
-            # FIXED: Update term and reset election timeout
+            #Update term and reset election timeout
             self.current_term = term
             self.leader_id = leader_id
             self.role = "follower"
-            self.voted_for = None  # Reset vote for next election
+            self.voted_for = None  #reset vote for next election
             self.last_heartbeat_time = time.time()
-            self.election_timeout = random.uniform(8.0, 12.0)  # Reset timeout
+            self.election_timeout = random.uniform(8.0, 12.0)  #reset timeout
             
             if leader_id != self.node_id:
                 print(f"[{self.node_id}] ❤️  Heartbeat from {leader_id} (term {term})")
                 
-                # Update switch master information
+                #update switch master information
                 for switch_id in self.switches.keys():
                     self.switches[switch_id]['master'] = leader_id
 
 state = ClusterState(node_id)
 
-# --- Flask API ---
+#Flask API
 web_app = Flask(__name__)
 
 @web_app.route('/status')
@@ -172,7 +169,7 @@ def receive_heartbeat():
 @web_app.route('/request_vote', methods=['POST'])
 def request_vote():
     """Handle vote requests from candidates"""
-    import time  # Add if not already at top
+    import time
     
     data = request.get_json()
     candidate_term = data['term']
@@ -180,26 +177,26 @@ def request_vote():
     
     print(f"[{node_id}] 📨 Vote request from {candidate_id} (term {candidate_term}, our term {state.current_term})")
     
-    # FIXED: Reset election timeout when we vote for someone
+    #Reset election timeout when we vote for someone
     vote_granted = False
     
-    # Grant vote if:
-    # 1. Candidate's term is higher than ours, OR
-    # 2. Same term and we haven't voted yet
+    #Grant vote if:
+    #1. Candidate's term is higher than ours, OR
+    #2. Same term and we haven't voted yet
     if candidate_term > state.current_term:
         state.current_term = candidate_term
         state.voted_for = candidate_id
         state.leader_id = None
         state.role = "follower"
-        state.last_heartbeat_time = time.time()  # Reset heartbeat timer
-        state.election_timeout = random.uniform(8.0, 12.0)  # Reset timeout
+        state.last_heartbeat_time = time.time()  #Reset heartbeat timer
+        state.election_timeout = random.uniform(8.0, 12.0)  #Reset timeout
         vote_granted = True
         print(f"[{node_id}] ✅ Voted for {candidate_id} (term {candidate_term})")
     
     elif candidate_term == state.current_term and state.voted_for in [None, candidate_id]:
         state.voted_for = candidate_id
-        state.last_heartbeat_time = time.time()  # Reset heartbeat timer
-        state.election_timeout = random.uniform(8.0, 12.0)  # Reset timeout
+        state.last_heartbeat_time = time.time()  #Reset heartbeat timer
+        state.election_timeout = random.uniform(8.0, 12.0)  #Reset timeout
         vote_granted = True
         print(f"[{node_id}] ✅ Voted for {candidate_id} (term {candidate_term})")
     else:
@@ -244,12 +241,12 @@ class MinisdnController(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         
-        # Store datapath for later use
+        #Store datapath for later use
         self.datapaths[switch_id] = datapath
         
         print(f"\n[{node_id}] 🔌 Switch s{switch_id} CONNECTED")
         
-        # Store switch info
+        #Store switch info
         master = state.leader_id if state.leader_id else node_id
         state.switches[switch_id] = {
             'master': master,
@@ -257,10 +254,10 @@ class MinisdnController(app_manager.RyuApp):
             'connected_at': time.time()
         }
         
-        # Initialize MAC learning table for this switch
+        #Initialize MAC learning table for this switch
         self.mac_to_port[switch_id] = {}
         
-        # CRITICAL: Install table-miss flow to send packets to controller
+        #Install table-miss flow to send packets to controller
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
@@ -303,21 +300,21 @@ class MinisdnController(app_manager.RyuApp):
         parser = datapath.ofproto_parser
         in_port = msg.match['in_port']
         
-        # Parse packet
+        #Parse packet
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocol(ethernet.ethernet)
         
         if not eth:
             return
         
-        # Skip if not master for this switch
+        #Skip if not master for this switch
         if switch_id in state.switches and state.switches[switch_id]['master'] != node_id:
             # Forward to master if known
             master_id = state.switches[switch_id]['master']
             print(f"[{node_id}] 📤 Forwarding packet from s{switch_id} to master {master_id}")
             return
         
-        # Learn MAC address
+        #Learn MAC address
         if switch_id not in self.mac_to_port:
             self.mac_to_port[switch_id] = {}
         
@@ -325,18 +322,18 @@ class MinisdnController(app_manager.RyuApp):
         
         print(f"[{node_id}] 📦 Packet on s{switch_id}: {eth.src[:8]} → {eth.dst[:8]} (port {in_port})")
         
-        # If destination is known, send to that port, otherwise flood
+        #If destination is known, send to that port, otherwise flood
         dst_port = self.mac_to_port[switch_id].get(eth.dst, ofproto.OFPP_FLOOD)
         
         actions = [parser.OFPActionOutput(dst_port)]
         
-        # Install flow if not flooding and not broadcast
+        #Install flow if not flooding and not broadcast
         if dst_port != ofproto.OFPP_FLOOD and not eth.dst.startswith('ff:ff:ff:ff:ff:ff'):
             match = parser.OFPMatch(in_port=in_port, eth_dst=eth.dst)
             self.add_flow(datapath, 1, match, actions)
             print(f"   ✓ Installed flow: {eth.src[:8]} → {eth.dst[:8]} via port {dst_port}")
         
-        # Send packet out
+        #Send packet out
         out = parser.OFPPacketOut(
             datapath=datapath,
             buffer_id=msg.buffer_id,
@@ -360,7 +357,7 @@ class MinisdnController(app_manager.RyuApp):
                 if switch_id in self.datapaths:
                     del self.datapaths[switch_id]
 
-# Helper function to check if we should handle this switch
+#Helper function to check if we should handle this switch
 def is_master_for_switch(switch_id):
     """Check if this node is master for the given switch"""
     if switch_id in state.switches:
