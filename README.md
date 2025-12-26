@@ -2,20 +2,20 @@
 
 Implementation of communication between SDN controllers for network state awareness via a 3-node cluster with Raft-based leader election.
 
-# TECH STACK
+# Tech Stack
 - Clustering: Raft-inspired consensus (heartbeats, random timeout, elections)
 - Controllers: Ryu (chosen for simplicity and lack of native clustering)
 - Communication: Flask HTTP API between nodes
 - Containerization: Docker for isolation
 
-# STATUS
+# Status
 - Control Plane (Consensus & Failover): WORKING
 - Data Plane (Ryu switch control): NOT WORKING
 
-# KNOWN ISSUE & NEXT STEP
+# Known Issue & Next Step
 The Ryu event handlers do not execute due to a threading conflict with Flask in the same process. The fix is to separate Ryu and Flask into two independent processes communicating via a local socket or queue.
 
-# SETUP & DEMO
+# Setup & Demo
 
 1. Build and start the cluster:
    docker build -t my-ryu .
